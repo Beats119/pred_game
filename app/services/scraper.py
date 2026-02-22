@@ -53,8 +53,8 @@ class BDGScraper:
                 from playwright_stealth import stealth_async
                 await stealth_async(self.page)
                 logger.info("Playwright stealth plugin applied")
-            except ImportError:
-                logger.warning("playwright-stealth not installed, bot detection might trigger on server")
+            except ImportError as e:
+                logger.warning(f"playwright-stealth not installed or failed to import: {e}")
 
 
             # ── Register persistent network response listener ──
