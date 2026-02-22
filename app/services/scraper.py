@@ -364,7 +364,8 @@ class BDGScraper:
                         import httpx
                         logger.warning("Uploading debug screenshot to 0x0.st...")
                         files = {'file': ('debug.jpg', screenshot_bytes, 'image/jpeg')}
-                        async with httpx.AsyncClient() as client:
+                        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+                        async with httpx.AsyncClient(headers=headers) as client:
                             resp = await client.post('https://0x0.st', files=files, timeout=15.0)
                             logger.error(f"🚨 DEBUG SCREENSHOT URL: {resp.text.strip()}")
                     except Exception as dbg_err:
