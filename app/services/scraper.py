@@ -269,7 +269,7 @@ class BDGScraper:
                         raise Exception("no box")
                 except Exception as e:
                     logger.warning(f"Lottery fallback: {e}")
-                    await self.page.mouse.click(207, 183)
+                    await self.page.mouse.click(224, 413)
 
                 try:
                     await self.page.wait_for_selector('text="Win Go"', timeout=10000)
@@ -290,7 +290,7 @@ class BDGScraper:
                         raise Exception("no box")
                 except Exception as e:
                     logger.warning(f"Win Go fallback: {e}")
-                    await self.page.mouse.click(207, 430)
+                    await self.page.mouse.click(59, 169)
 
                 try:
                     await self.page.wait_for_url("**/saasLottery/**", timeout=10000)
@@ -359,15 +359,15 @@ class BDGScraper:
                         dom_preview = await self.page.evaluate("document.body.innerHTML")
                         logger.warning(f"Current DOM preview (first 1000 chars): {dom_preview[:1000]}")
                         
-                        # Upload screenshot to 0x0.st so we can see what Railway sees
+                        # Take base64 screenshot and chunk it so Railway doesn't truncate/block it, and user can copy-paste it
                         screenshot_bytes = await self.page.screenshot(type="jpeg", quality=30)
-                        import httpx
-                        logger.warning("Uploading debug screenshot to 0x0.st...")
-                        files = {'file': ('debug.jpg', screenshot_bytes, 'image/jpeg')}
-                        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
-                        async with httpx.AsyncClient(headers=headers) as client:
-                            resp = await client.post('https://0x0.st', files=files, timeout=15.0)
-                            logger.error(f"🚨 DEBUG SCREENSHOT URL: {resp.text.strip()}")
+                        import base64
+                        b64 = base64.b64encode(screenshot_bytes).decode('ascii')
+                        logger.warning(f"DEBUG_SCREENSHOT_B64_START")
+                        chunk_size = 500
+                        for i in range(0, len(b64), chunk_size):
+                            logger.warning(f"B64_CHUNK: {b64[i:i+chunk_size]}")
+                        logger.warning(f"DEBUG_SCREENSHOT_B64_END")
                     except Exception as dbg_err:
                         logger.error(f"Failed to capture/upload debug screenshot: {dbg_err}")
 
