@@ -208,42 +208,9 @@ class BDGScraper:
                     raise Exception(f"Failed to login after {max_retries} attempts: {e}")
 
     async def fetch_game_results(self) -> List[Dict]:
-        """Fetch WinGo 30S game results. Primary: direct JSON URL. Fallback: DOM."""
-        # ── PRIMARY: Direct HTTP fetch (no DOM, no rendering issues) ──
-        # BDG WIN fetches game history from this public JSON file
-        HISTORY_URLS = [
-            "https://draw.ar-lottery01.com/WinGo/WinGo_30S/GetHistoryIssuePage.json",
-            "https://draw.ar-lottery01.com/WinGo/WinGo_30S.json",
-        ]
-        try:
-            import httpx, json as _json
-            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-                for url in HISTORY_URLS:
-                    try:
-                        resp = await client.get(url, headers={
-                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0",
-                            "Referer": "https://bdgwina.cc/",
-                            "Accept": "*/*",
-                        })
-                        logger.info(f"📡 HTTP {resp.status_code} from {url} (ct={resp.headers.get('content-type','')})")
-                        if resp.status_code == 200:
-                            # Use json.loads to bypass content-type check (server returns octet-stream)
-                            data = _json.loads(resp.text)
-                            results = _parse_api_response(data)
-                            if results:
-                                logger.info(f"✅ Direct HTTP fetch got {len(results)} results from {url}")
-                                for i, r in enumerate(results[:3]):
-                                    logger.info(f"   #{i+1}: Period={r.get('period')}, Number={r.get('number')}, BigSmall={r.get('bigSmall')}")
-                                return results
-                            else:
-                                logger.warning(f"⚠️ Parsed 0 results from {url}. Body: {resp.text[:300]}")
-                    except Exception as e:
-                        logger.warning(f"Direct fetch {url} failed: {e}")
-        except Exception as e:
-            logger.warning(f"httpx direct fetch outer error: {e}")
+        """Fetch WinGo 30S game results. Primary: in-browser fetch(). Fallback: DOM."""
 
         # ── FALLBACK: Browser navigation + DOM extraction ──
-        logger.info("Direct HTTP failed — using browser DOM fallback...")
         max_retries = 3
         retry_count = 0
 
@@ -306,6 +273,47 @@ class BDGScraper:
                 except Exception as e:
                     logger.warning(f"URL wait timeout: {e}")
 
+                # ── PRIMARY: Fetch game JSON from INSIDE the browser context ──
+                # This bypasses Railway IP blocks since request comes from the browser
+                logger.info("Fetching game history JSON from inside browser context...")
+                try:
+                    data = await self.page.evaluate("""
+                        async () => {
+                            const urls = [
+                                'https://draw.ar-lottery01.com/WinGo/WinGo_30S/GetHistoryIssuePage.json',
+                                'https://draw.ar-lottery01.com/WinGo/WinGo_30S.json'
+                            ];
+                            for (const url of urls) {
+                                try {
+                                    const r = await fetch(url, {
+                                        headers: { 'Referer': 'https://bdgwina.cc/' }
+                                    });
+                                    if (r.ok) {
+                                        const json = await r.json();
+                                        return { url: url, data: json, status: r.status };
+                                    }
+                                } catch(e) {}
+                            }
+                            return null;
+                        }
+                    """)
+                    if data and data.get("data"):
+                        logger.info(f"✅ In-browser fetch got data from {data.get('url')} (status={data.get('status')})")
+                        results = _parse_api_response(data["data"])
+                        if results:
+                            logger.info(f"✅ Parsed {len(results)} results")
+                            for i, r in enumerate(results[:3]):
+                                logger.info(f"   #{i+1}: Period={r.get('period')}, Number={r.get('number')}, BigSmall={r.get('bigSmall')}")
+                            return results
+                        else:
+                            logger.warning(f"⚠️ In-browser fetch returned data but parsed 0 results. Keys: {list(data['data'].keys()) if isinstance(data['data'], dict) else type(data['data'])}")
+                    else:
+                        logger.warning("⚠️ In-browser fetch returned null or no data")
+                except Exception as e:
+                    logger.warning(f"In-browser fetch failed: {e}")
+
+                # ── DOM FALLBACK ──
+                logger.info("Falling back to DOM extraction...")
                 await asyncio.sleep(5)
                 for i in range(5):
                     await self.page.mouse.wheel(0, 700)
@@ -325,6 +333,8 @@ class BDGScraper:
                 await asyncio.sleep(5)
 
         return []
+
+
 
     async def _extract_results(self) -> List[Dict]:
         """DOM fallback: extract game results from .van-row elements."""
