@@ -37,19 +37,14 @@ class BDGScraper:
                 ]
             )
             
-            # Use desktop viewport in headless/server mode, mobile for local dev
-            if headless:
-                self.context = await self.browser.new_context(
-                    viewport={"width": 1280, "height": 800},
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                )
-            else:
-                self.context = await self.browser.new_context(
-                    viewport={"width": 414, "height": 896},
-                    user_agent="Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36",
-                    is_mobile=True,
-                    has_touch=True,
-                )
+            # BDG WIN is a mobile SPA using Vant. It completely changes DOM and network behavior 
+            # if user-agent isn't mobile. MUST force mobile viewport even in headless/server.
+            self.context = await self.browser.new_context(
+                viewport={"width": 414, "height": 896},
+                user_agent="Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36",
+                is_mobile=True,
+                has_touch=True,
+            )
             
             self.page = await self.context.new_page()
 
