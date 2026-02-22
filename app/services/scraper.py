@@ -293,10 +293,11 @@ class BDGScraper:
                     await self.page.mouse.click(59, 169)
 
                 try:
-                    await self.page.wait_for_url("**/saasLottery/**", timeout=10000)
-                    logger.info(f"WinGo page loaded: {self.page.url}")
+                    # Give the SPA transition a moment to start
+                    logger.info("Waiting for WinGo SPA transition...")
+                    await asyncio.sleep(3)
                 except Exception as e:
-                    logger.warning(f"URL wait timeout: {e}")
+                    pass
 
                 # ── PRIMARY: Background Response Listener Cache ──
                 logger.info("Waiting for background network listener to capture data (up to 10s)...")
