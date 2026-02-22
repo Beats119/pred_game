@@ -253,44 +253,11 @@ class BDGScraper:
                         retry_count += 1
                         continue
 
-                home_url = f"{settings.BDG_BASE_URL.rstrip('/')}/#/home"
-                await self.page.goto(home_url, wait_until="domcontentloaded")
+                # Instead of fragile coordinate clicking, deep-link directly to WinGo
+                wingo_url = f"{settings.BDG_BASE_URL.rstrip('/')}/#/saasLottery/WinGo?gameCode=WinGo_30S&lottery=WinGo"
+                logger.info(f"Navigating directly to WinGo URL: {wingo_url}")
+                await self.page.goto(wingo_url, wait_until="domcontentloaded", timeout=15000)
                 await asyncio.sleep(3)
-
-                logger.info("Clicking Lottery tab...")
-                try:
-                    lottery_box = await self.page.locator('text="Lottery"').first.bounding_box(timeout=8000)
-                    if lottery_box:
-                        cx = lottery_box['x'] + lottery_box['width'] / 2
-                        cy = lottery_box['y'] + lottery_box['height'] / 2
-                        await self.page.mouse.click(cx, cy)
-                        logger.info(f"Lottery clicked at ({cx:.0f}, {cy:.0f})")
-                    else:
-                        raise Exception("no box")
-                except Exception as e:
-                    logger.warning(f"Lottery fallback: {e}")
-                    await self.page.mouse.click(224, 413)
-
-                try:
-                    await self.page.wait_for_selector('text="Win Go"', timeout=10000)
-                    logger.info("Win Go card found in DOM")
-                except Exception as e:
-                    logger.warning(f"Win Go card not found: {e}")
-
-                await asyncio.sleep(1)
-                logger.info("Clicking Win Go card...")
-                try:
-                    wingo_box = await self.page.locator('text="Win Go"').first.bounding_box(timeout=8000)
-                    if wingo_box:
-                        cx = wingo_box['x'] + wingo_box['width'] / 2
-                        cy = wingo_box['y'] + wingo_box['height'] / 2
-                        await self.page.mouse.click(cx, cy)
-                        logger.info(f"Win Go clicked at ({cx:.0f}, {cy:.0f})")
-                    else:
-                        raise Exception("no box")
-                except Exception as e:
-                    logger.warning(f"Win Go fallback: {e}")
-                    await self.page.mouse.click(59, 169)
 
                 try:
                     # Give the SPA transition a moment to start
