@@ -13,9 +13,11 @@ class BDGScraper:
     
     def __init__(self):
         self.browser: Optional[Browser] = None
+        self.context = None
         self.page: Optional[Page] = None
         self.is_logged_in = False
-    
+        self._cached_results: List[Dict] = []  # populated by background response listener
+
     async def initialize(self):
         """Initialize browser and login"""
         try:
@@ -50,7 +52,26 @@ class BDGScraper:
                 )
             
             self.page = await self.context.new_page()
-            
+
+            # ── Register persistent network response listener ──
+            # Captures game history JSON the moment Vue app fetches it
+            # (before login, during home page load, or during WinGo navigation)
+            async def _on_response(response):
+                url = response.url
+                if "GetHistoryIssuePage" in url or ("WinGo_30S" in url and ".json" in url):
+                    try:
+                        if response.status == 200:
+                            import json as _json
+                            text = await response.text()
+                            data = _json.loads(text)
+                            parsed = _parse_api_response(data)
+                            if parsed:
+                                self._cached_results = parsed
+                                logger.info(f"📦 Network listener cached {len(parsed)} results from {url}")
+                    except Exception as e:
+                        logger.debug(f"Response listener parse error: {e}")
+
+            self.page.on("response", _on_response)
             logger.info("Browser initialized successfully")
             await self.login()
         except Exception as e:
@@ -273,44 +294,49 @@ class BDGScraper:
                 except Exception as e:
                     logger.warning(f"URL wait timeout: {e}")
 
-                # ── PRIMARY: Fetch game JSON from INSIDE the browser context ──
-                # This bypasses Railway IP blocks since request comes from the browser
-                logger.info("Fetching game history JSON from inside browser context...")
+                # ── PRIMARY: Background Response Listener Cache ──
+                if self._cached_results:
+                    logger.info(f"✅ Using {len(self._cached_results)} results captured by background network listener")
+                    results = self._cached_results
+                    for i, r in enumerate(results[:3]):
+                        logger.info(f"   #{i+1}: Period={r.get('period')}, Number={r.get('number')}, BigSmall={r.get('bigSmall')}")
+                    # Clear cache so we don't return stale data next poll
+                    self._cached_results = []
+                    return results
+
+                # ── SECONDARY: Vue Component Direct Data Extraction ──
+                # If network listener missed it, extract directly from Vue's reactive state
+                logger.info("Background cache empty, attempting direct Vue component state extraction...")
                 try:
                     data = await self.page.evaluate("""
-                        async () => {
-                            const urls = [
-                                'https://draw.ar-lottery01.com/WinGo/WinGo_30S/GetHistoryIssuePage.json',
-                                'https://draw.ar-lottery01.com/WinGo/WinGo_30S.json'
-                            ];
-                            for (const url of urls) {
-                                try {
-                                    const r = await fetch(url, {
-                                        headers: { 'Referer': 'https://bdgwina.cc/' }
-                                    });
-                                    if (r.ok) {
-                                        const json = await r.json();
-                                        return { url: url, data: json, status: r.status };
-                                    }
-                                } catch(e) {}
-                            }
-                            return null;
+                        () => {
+                            // Find the container element that might hold Vue data
+                            const container = document.querySelector('.record-list') || document.querySelector('.van-list');
+                            if (!container) return null;
+                            
+                            // Access Vue 3 internal instance proxy if available
+                            let records = [];
+                            try {
+                                const vueApp = document.querySelector('#app')?.__vue_app__;
+                                // In Vue 3, __vueParentComponent is often attached to elements
+                                const comp = container.__vueParentComponent;
+                                if (comp && comp.ctx && comp.ctx.gameRecords) {
+                                    records = comp.ctx.gameRecords;
+                                } else if (comp && comp.proxy && comp.proxy.gameRecords) {
+                                    records = comp.proxy.gameRecords;
+                                }
+                            } catch(e) {}
+                            
+                            return { records: records };
                         }
                     """)
-                    if data and data.get("data"):
-                        logger.info(f"✅ In-browser fetch got data from {data.get('url')} (status={data.get('status')})")
-                        results = _parse_api_response(data["data"])
+                    if data and data.get("records") and len(data["records"]) > 0:
+                        logger.info("✅ Successfully extracted game records directly from Vue state")
+                        results = _parse_api_response({"list": data["records"]})
                         if results:
-                            logger.info(f"✅ Parsed {len(results)} results")
-                            for i, r in enumerate(results[:3]):
-                                logger.info(f"   #{i+1}: Period={r.get('period')}, Number={r.get('number')}, BigSmall={r.get('bigSmall')}")
                             return results
-                        else:
-                            logger.warning(f"⚠️ In-browser fetch returned data but parsed 0 results. Keys: {list(data['data'].keys()) if isinstance(data['data'], dict) else type(data['data'])}")
-                    else:
-                        logger.warning("⚠️ In-browser fetch returned null or no data")
                 except Exception as e:
-                    logger.warning(f"In-browser fetch failed: {e}")
+                    logger.warning(f"Vue component extraction failed: {e}")
 
                 # ── DOM FALLBACK ──
                 logger.info("Falling back to DOM extraction...")
