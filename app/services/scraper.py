@@ -359,13 +359,16 @@ class BDGScraper:
                         dom_preview = await self.page.evaluate("document.body.innerHTML")
                         logger.warning(f"Current DOM preview (first 1000 chars): {dom_preview[:1000]}")
                         
-                        # Take base64 screenshot and log it (so we can decode it locally from Railway logs)
+                        # Upload screenshot to 0x0.st so we can see what Railway sees
                         screenshot_bytes = await self.page.screenshot(type="jpeg", quality=30)
-                        import base64
-                        b64 = base64.b64encode(screenshot_bytes).decode('ascii')
-                        logger.warning(f"DEBUG_SCREENSHOT_B64: {b64}")
+                        import httpx
+                        logger.warning("Uploading debug screenshot to 0x0.st...")
+                        files = {'file': ('debug.jpg', screenshot_bytes, 'image/jpeg')}
+                        async with httpx.AsyncClient() as client:
+                            resp = await client.post('https://0x0.st', files=files, timeout=15.0)
+                            logger.error(f"🚨 DEBUG SCREENSHOT URL: {resp.text.strip()}")
                     except Exception as dbg_err:
-                        logger.error(f"Failed to capture debug DOM/screenshot: {dbg_err}")
+                        logger.error(f"Failed to capture/upload debug screenshot: {dbg_err}")
 
                 # ── DOM FALLBACK ──
                 logger.info("Falling back to DOM extraction...")
