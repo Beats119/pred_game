@@ -253,16 +253,35 @@ class BDGScraper:
                         retry_count += 1
                         continue
 
-                # Instead of fragile coordinate clicking, deep-link directly to WinGo
-                wingo_url = f"{settings.BDG_BASE_URL.rstrip('/')}/#/saasLottery/WinGo?gameCode=WinGo_30S&lottery=WinGo"
-                logger.info(f"Navigating directly to WinGo URL: {wingo_url}")
-                await self.page.goto(wingo_url, wait_until="domcontentloaded", timeout=15000)
-                await asyncio.sleep(3)
+                home_url = f"{settings.BDG_BASE_URL.rstrip('/')}/#/home"
+                await self.page.goto(home_url, wait_until="domcontentloaded")
+                await asyncio.sleep(4)
+
+                logger.info("Clicking Lottery tab via DOM...")
+                try:
+                    await self.page.locator('text="Lottery"').first.click(force=True, timeout=10000)
+                    logger.info("✅ Clicked Lottery tab")
+                except Exception as e:
+                    logger.warning(f"Lottery DOM click failed: {e}")
+                    # Last resort coordinates for mobile viewport
+                    await self.page.mouse.click(224, 413)
+
+                await asyncio.sleep(2)
+                
+                logger.info("Clicking Win Go card via DOM...")
+                try:
+                    await self.page.wait_for_selector('text="Win Go"', timeout=10000)
+                    await self.page.locator('text="Win Go"').first.click(force=True, timeout=10000)
+                    logger.info("✅ Clicked Win Go card")
+                except Exception as e:
+                    logger.warning(f"Win Go DOM click failed: {e}")
+                    # Last resort coordinates for mobile viewport
+                    await self.page.mouse.click(59, 169)
 
                 try:
                     # Give the SPA transition a moment to start
                     logger.info("Waiting for WinGo SPA transition...")
-                    await asyncio.sleep(3)
+                    await asyncio.sleep(4)
                 except Exception as e:
                     pass
 
