@@ -216,26 +216,31 @@ class BDGScraper:
             "https://draw.ar-lottery01.com/WinGo/WinGo_30S.json",
         ]
         try:
-            import httpx
-            async with httpx.AsyncClient(timeout=10) as client:
+            import httpx, json as _json
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
                 for url in HISTORY_URLS:
                     try:
                         resp = await client.get(url, headers={
                             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0",
                             "Referer": "https://bdgwina.cc/",
+                            "Accept": "*/*",
                         })
+                        logger.info(f"📡 HTTP {resp.status_code} from {url} (ct={resp.headers.get('content-type','')})")
                         if resp.status_code == 200:
-                            data = resp.json()
+                            # Use json.loads to bypass content-type check (server returns octet-stream)
+                            data = _json.loads(resp.text)
                             results = _parse_api_response(data)
                             if results:
                                 logger.info(f"✅ Direct HTTP fetch got {len(results)} results from {url}")
                                 for i, r in enumerate(results[:3]):
                                     logger.info(f"   #{i+1}: Period={r.get('period')}, Number={r.get('number')}, BigSmall={r.get('bigSmall')}")
                                 return results
+                            else:
+                                logger.warning(f"⚠️ Parsed 0 results from {url}. Body: {resp.text[:300]}")
                     except Exception as e:
-                        logger.debug(f"Direct fetch {url} failed: {e}")
+                        logger.warning(f"Direct fetch {url} failed: {e}")
         except Exception as e:
-            logger.warning(f"httpx direct fetch failed: {e}")
+            logger.warning(f"httpx direct fetch outer error: {e}")
 
         # ── FALLBACK: Browser navigation + DOM extraction ──
         logger.info("Direct HTTP failed — using browser DOM fallback...")
