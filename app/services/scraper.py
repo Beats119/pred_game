@@ -47,6 +47,15 @@ class BDGScraper:
             )
             
             self.page = await self.context.new_page()
+            
+            # Apply stealth plugin to avoid Cloudflare/Vue headless detection
+            try:
+                from playwright_stealth import stealth_async
+                await stealth_async(self.page)
+                logger.info("Playwright stealth plugin applied")
+            except ImportError:
+                logger.warning("playwright-stealth not installed, bot detection might trigger on server")
+
 
             # ── Register persistent network response listener ──
             # Captures game history JSON the moment Vue app fetches it
