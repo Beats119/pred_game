@@ -353,6 +353,19 @@ class BDGScraper:
                         
                 except Exception as e:
                     logger.warning(f"Vue component extraction failed: {e}")
+                    try:
+                        # Dump what the server actually sees for debugging
+                        logger.warning(f"Failed on URL: {self.page.url}")
+                        dom_preview = await self.page.evaluate("document.body.innerHTML")
+                        logger.warning(f"Current DOM preview (first 1000 chars): {dom_preview[:1000]}")
+                        
+                        # Take base64 screenshot and log it (so we can decode it locally from Railway logs)
+                        screenshot_bytes = await self.page.screenshot(type="jpeg", quality=30)
+                        import base64
+                        b64 = base64.b64encode(screenshot_bytes).decode('ascii')
+                        logger.warning(f"DEBUG_SCREENSHOT_B64: {b64}")
+                    except Exception as dbg_err:
+                        logger.error(f"Failed to capture debug DOM/screenshot: {dbg_err}")
 
                 # ── DOM FALLBACK ──
                 logger.info("Falling back to DOM extraction...")
