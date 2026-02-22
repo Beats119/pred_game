@@ -295,46 +295,58 @@ class BDGScraper:
                     logger.warning(f"URL wait timeout: {e}")
 
                 # ── PRIMARY: Background Response Listener Cache ──
-                if self._cached_results:
-                    logger.info(f"✅ Using {len(self._cached_results)} results captured by background network listener")
-                    results = self._cached_results
-                    for i, r in enumerate(results[:3]):
-                        logger.info(f"   #{i+1}: Period={r.get('period')}, Number={r.get('number')}, BigSmall={r.get('bigSmall')}")
-                    # Clear cache so we don't return stale data next poll
-                    self._cached_results = []
-                    return results
+                logger.info("Waiting for background network listener to capture data (up to 10s)...")
+                for _ in range(5):
+                    if self._cached_results:
+                        logger.info(f"✅ Using {len(self._cached_results)} results captured by background network listener")
+                        results = self._cached_results
+                        for i, r in enumerate(results[:3]):
+                            logger.info(f"   #{i+1}: Period={r.get('period')}, Number={r.get('number')}, BigSmall={r.get('bigSmall')}")
+                        # Clear cache so we don't return stale data next poll
+                        self._cached_results = []
+                        return results
+                    await asyncio.sleep(2)
 
                 # ── SECONDARY: Vue Component Direct Data Extraction ──
                 # If network listener missed it, extract directly from Vue's reactive state
                 logger.info("Background cache empty, attempting direct Vue component state extraction...")
                 try:
-                    data = await self.page.evaluate("""
-                        () => {
-                            // Find the container element that might hold Vue data
-                            const container = document.querySelector('.record-list') || document.querySelector('.van-list');
-                            if (!container) return null;
-                            
-                            // Access Vue 3 internal instance proxy if available
-                            let records = [];
-                            try {
-                                const vueApp = document.querySelector('#app')?.__vue_app__;
-                                // In Vue 3, __vueParentComponent is often attached to elements
-                                const comp = container.__vueParentComponent;
-                                if (comp && comp.ctx && comp.ctx.gameRecords) {
-                                    records = comp.ctx.gameRecords;
-                                } else if (comp && comp.proxy && comp.proxy.gameRecords) {
-                                    records = comp.proxy.gameRecords;
-                                }
-                            } catch(e) {}
-                            
-                            return { records: records };
-                        }
-                    """)
-                    if data and data.get("records") and len(data["records"]) > 0:
-                        logger.info("✅ Successfully extracted game records directly from Vue state")
-                        results = _parse_api_response({"list": data["records"]})
-                        if results:
-                            return results
+                    # Explicitly wait for the list container to mount
+                    await self.page.wait_for_selector('.record-list, .van-list', timeout=10000)
+                    
+                    # Try extracting state a few times (Vue might take a moment to populate arrays)
+                    for wait_attempt in range(5):
+                        data = await self.page.evaluate("""
+                            () => {
+                                // Find the container element that might hold Vue data
+                                const container = document.querySelector('.record-list') || document.querySelector('.van-list');
+                                if (!container) return null;
+                                
+                                // Access Vue 3 internal instance proxy if available
+                                let records = [];
+                                try {
+                                    const vueApp = document.querySelector('#app')?.__vue_app__;
+                                    // In Vue 3, __vueParentComponent is often attached to elements
+                                    const comp = container.__vueParentComponent;
+                                    if (comp && comp.ctx && comp.ctx.gameRecords) {
+                                        records = comp.ctx.gameRecords;
+                                    } else if (comp && comp.proxy && comp.proxy.gameRecords) {
+                                        records = comp.proxy.gameRecords;
+                                    }
+                                } catch(e) {}
+                                
+                                return { records: records };
+                            }
+                        """)
+                        if data and data.get("records") and len(data["records"]) > 0:
+                            logger.info("✅ Successfully extracted game records directly from Vue state")
+                            results = _parse_api_response({"list": data["records"]})
+                            if results:
+                                return results
+                        
+                        logger.debug("Vue state empty, waiting 2s...")
+                        await asyncio.sleep(2)
+                        
                 except Exception as e:
                     logger.warning(f"Vue component extraction failed: {e}")
 
