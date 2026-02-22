@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+redis
+playwright
+python-dotenv
+pydantic
+pydantic-settings
+httpx
+apscheduler
+pytest
+pytest-asyncio
