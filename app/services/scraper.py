@@ -236,8 +236,14 @@ class BDGScraper:
                 async def handle_response(response):
                     """Capture game history API responses."""
                     url = response.url
-                    # BDG WIN history endpoint patterns
-                    if any(k in url for k in ["lottery/WinGo", "gameRecord", "lotteryHistory", "result/list", "GetNoaverageEmerdList"]):
+                    # Exact confirmed BDG WIN history endpoint (captured via network inspection)
+                    is_history = (
+                        "GetHistoryIssuePage" in url or
+                        "GetNoaverageEmerdList" in url or
+                        ("WinGo_30S" in url and (".json" in url or "history" in url.lower())) or
+                        any(k in url for k in ["lotteryHistory", "gameRecord", "result/list"])
+                    )
+                    if is_history:
                         try:
                             if response.status == 200:
                                 data = await response.json()
