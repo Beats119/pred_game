@@ -208,16 +208,45 @@ class BDGScraper:
                     raise Exception(f"Failed to login after {max_retries} attempts: {e}")
 
     async def fetch_game_results(self) -> List[Dict]:
-        """Fetch WinGo 30S game results recently emitted."""
+        """Fetch WinGo 30S game results. Primary: direct JSON URL. Fallback: DOM."""
+        # ── PRIMARY: Direct HTTP fetch (no DOM, no rendering issues) ──
+        # BDG WIN fetches game history from this public JSON file
+        HISTORY_URLS = [
+            "https://draw.ar-lottery01.com/WinGo/WinGo_30S/GetHistoryIssuePage.json",
+            "https://draw.ar-lottery01.com/WinGo/WinGo_30S.json",
+        ]
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=10) as client:
+                for url in HISTORY_URLS:
+                    try:
+                        resp = await client.get(url, headers={
+                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0",
+                            "Referer": "https://bdgwina.cc/",
+                        })
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            results = _parse_api_response(data)
+                            if results:
+                                logger.info(f"✅ Direct HTTP fetch got {len(results)} results from {url}")
+                                for i, r in enumerate(results[:3]):
+                                    logger.info(f"   #{i+1}: Period={r.get('period')}, Number={r.get('number')}, BigSmall={r.get('bigSmall')}")
+                                return results
+                    except Exception as e:
+                        logger.debug(f"Direct fetch {url} failed: {e}")
+        except Exception as e:
+            logger.warning(f"httpx direct fetch failed: {e}")
+
+        # ── FALLBACK: Browser navigation + DOM extraction ──
+        logger.info("Direct HTTP failed — using browser DOM fallback...")
         max_retries = 3
         retry_count = 0
-        
+
         while retry_count < max_retries:
             try:
                 if not self.is_logged_in or not self.page or self.page.is_closed():
                     try:
                         if self.page and self.page.is_closed():
-                            logger.info("Browser page was closed/crashed. Re-initializing entirely...")
                             await self.close()
                             await self.initialize()
                         else:
@@ -226,44 +255,11 @@ class BDGScraper:
                         logger.error(f"Failed to establish session: {e}")
                         retry_count += 1
                         continue
-                
-                # ── APPROACH: Intercept the API response the Vue app fetches ──
-                # Vue's virtual scroll never renders DOM rows in headless mode.
-                # Instead we capture the JSON the app fetches from its backend.
-                captured_results = []
-                api_event = asyncio.Event()
 
-                async def handle_response(response):
-                    """Capture game history API responses."""
-                    url = response.url
-                    # Exact confirmed BDG WIN history endpoint (captured via network inspection)
-                    is_history = (
-                        "GetHistoryIssuePage" in url or
-                        "GetNoaverageEmerdList" in url or
-                        ("WinGo_30S" in url and (".json" in url or "history" in url.lower())) or
-                        any(k in url for k in ["lotteryHistory", "gameRecord", "result/list"])
-                    )
-                    if is_history:
-                        try:
-                            if response.status == 200:
-                                data = await response.json()
-                                logger.info(f"🌐 API intercepted: {url}")
-                                logger.info(f"   Response keys: {list(data.keys()) if isinstance(data, dict) else 'list'}")
-                                parsed = _parse_api_response(data)
-                                if parsed:
-                                    captured_results.extend(parsed)
-                                    api_event.set()
-                        except Exception as e:
-                            logger.debug(f"Could not parse response from {url}: {e}")
-
-                self.page.on("response", handle_response)
-
-                # 1. Navigate to Home then click through to WinGo
                 home_url = f"{settings.BDG_BASE_URL.rstrip('/')}/#/home"
                 await self.page.goto(home_url, wait_until="domcontentloaded")
                 await asyncio.sleep(3)
 
-                # 2. Click Lottery tab
                 logger.info("Clicking Lottery tab...")
                 try:
                     lottery_box = await self.page.locator('text="Lottery"').first.bounding_box(timeout=8000)
@@ -275,11 +271,9 @@ class BDGScraper:
                     else:
                         raise Exception("no box")
                 except Exception as e:
-                    logger.warning(f"Lottery fallback coord click: {e}")
+                    logger.warning(f"Lottery fallback: {e}")
                     await self.page.mouse.click(207, 183)
 
-                # 3. Wait for Win Go card and click it
-                logger.info("Waiting for Win Go card to render...")
                 try:
                     await self.page.wait_for_selector('text="Win Go"', timeout=10000)
                     logger.info("Win Go card found in DOM")
@@ -298,121 +292,40 @@ class BDGScraper:
                     else:
                         raise Exception("no box")
                 except Exception as e:
-                    logger.warning(f"Win Go fallback coord click at (207, 430): {e}")
+                    logger.warning(f"Win Go fallback: {e}")
                     await self.page.mouse.click(207, 430)
 
-                # 4. Wait for URL change
-                logger.info("Waiting for WinGo page to load...")
                 try:
                     await self.page.wait_for_url("**/saasLottery/**", timeout=10000)
                     logger.info(f"WinGo page loaded: {self.page.url}")
                 except Exception as e:
                     logger.warning(f"URL wait timeout: {e}")
 
-                # 5. Wait for API response to be captured (up to 15s)
-                logger.info("Waiting for game history API response...")
-                try:
-                    await asyncio.wait_for(api_event.wait(), timeout=15)
-                    logger.info(f"✅ API interception captured {len(captured_results)} results")
-                except asyncio.TimeoutError:
-                    logger.warning("⚠️ API interception timed out — falling back to DOM extraction")
-
-                # Remove listener
-                self.page.remove_listener("response", handle_response)
-
-                # 6. If API gave us data, use it
-                if captured_results:
-                    results = captured_results[:10]  # newest 10
-                    for i, r in enumerate(results[:3]):
-                        logger.info(f"   #{i+1}: Period={r.get('period')}, Number={r.get('number')}, BigSmall={r.get('bigSmall')}")
-                    return results
-
-                # 7. Fallback: DOM extraction with extra scrolling
-                logger.info("Falling back to DOM extraction...")
                 await asyncio.sleep(5)
                 for i in range(5):
                     await self.page.mouse.wheel(0, 700)
                     await asyncio.sleep(1.5)
+
                 results = await self._extract_results()
-
                 if not results:
-                    raise Exception("No results extracted via API or DOM")
-
-                logger.debug(f"Fetched {len(results)} game results")
+                    raise Exception("No results extracted")
                 return results
 
             except Exception as e:
                 logger.error(f"Fetch attempt {retry_count + 1} failed: {e}")
                 retry_count += 1
                 if retry_count >= max_retries:
-                    logger.error("Max retries fetching results reached")
+                    logger.error("Max retries reached")
                     return []
                 await asyncio.sleep(5)
 
         return []
 
-
-def _parse_api_response(data: dict) -> list:
-    """Parse BDG WIN game history API response into our standard format."""
-    results = []
-    try:
-        # Try common response structures
-        records = None
-        if isinstance(data, dict):
-            # Common patterns: data.data, data.list, data.result, data.records
-            for key in ["data", "list", "result", "records", "rows", "gameRecords"]:
-                val = data.get(key)
-                if isinstance(val, list) and val:
-                    records = val
-                    break
-                elif isinstance(val, dict):
-                    # nested: data.data.list
-                    for inner_key in ["list", "records", "rows", "gameRecords"]:
-                        inner = val.get(inner_key)
-                        if isinstance(inner, list) and inner:
-                            records = inner
-                            break
-                    if records:
-                        break
-        elif isinstance(data, list):
-            records = data
-
-        if not records:
-            return []
-
-        for item in records[:10]:
-            if not isinstance(item, dict):
-                continue
-            # Extract period
-            period = str(item.get("issueNumber") or item.get("period") or
-                        item.get("issue") or item.get("gameNo") or "")
-            # Extract number
-            number_raw = item.get("number") or item.get("winNumber") or item.get("openCode") or ""
-            try:
-                number = int(str(number_raw).strip().split(",")[0])
-            except (ValueError, TypeError):
-                continue
-            # Derive Big/Small
-            big_small = item.get("bigSmall") or item.get("bigOrSmall") or (
-                "Big" if number >= 5 else "Small"
-            )
-            if period and 0 <= number <= 9:
-                results.append({
-                    "period": period,
-                    "number": number,
-                    "bigSmall": big_small,
-                    "timestamp": item.get("createTime", 0)
-                })
-    except Exception as e:
-        pass
-    return results
-
-
     async def _extract_results(self) -> List[Dict]:
-        """Extract game results focusing on the accurate Big/Small and Period columns"""
+        """DOM fallback: extract game results from .van-row elements."""
         try:
-            
             logger.info("Scrolling down to trigger lazy-loaded game grid...")
+
             # Scroll down multiple times to ensure the Vue grid renders
             for _ in range(3):
                 await self.page.mouse.wheel(0, 800)
